@@ -263,6 +263,15 @@ ifdef CONFIG_PROXYARP
 CONFIG_L2_PACKET=y
 endif
 
+# ADDITION
+ifdef CONFIG_PQ_SAE
+CFLAGS += -DCONFIG_PQ_SAE
+OBJS += ../src/common/sae_pq.o
+LIBS += -loqs
+endif
+#END
+
+
 ifdef CONFIG_SUITEB
 CFLAGS += -DCONFIG_SUITEB
 endif

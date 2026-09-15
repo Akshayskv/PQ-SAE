@@ -16,7 +16,12 @@
 #define SAE_MAX_PRIME_LEN 512
 #define SAE_MAX_ECC_PRIME_LEN 66
 #define SAE_MAX_HASH_LEN 64
-#define SAE_COMMIT_MAX_LEN (2 + 3 * SAE_MAX_PRIME_LEN + 255)
+#include "sae_pq.h"
+// #define SAE_COMMIT_MAX_LEN (2 + 3 * SAE_MAX_PRIME_LEN + 255)
+// CHANGE
+#define SAE_COMMIT_MAX_LEN (2 + 3 * SAE_MAX_PRIME_LEN + 255 + \
+			     PQ_SAE_PUBKEY_MAX_LEN + PQ_SAE_CT_MAX_LEN + 64)
+// END
 #ifdef CONFIG_SAE_PK
 #define SAE_CONFIRM_MAX_LEN ((2 + SAE_MAX_HASH_LEN) + 1500)
 #else /* CONFIG_SAE_PK */
@@ -71,6 +76,21 @@ struct sae_temporary_data {
 	struct wpabuf *peer_rejected_groups;
 	unsigned int own_addr_higher:1;
 	unsigned int try_other_password:1;
+
+	unsigned int own_addr_higher:1;
+
+	/* --- PQC hybrid additions (see sae_pq.h/.c for all logic) --- */
+	void *pq_kem;                     /* OQS_KEM *, opaque here */
+	struct wpabuf *pq_own_pubkey;
+	struct wpabuf *pq_own_seckey_buf;
+	struct wpabuf *pq_peer_pubkey;
+	struct wpabuf *pq_own_ciphertext;
+	struct wpabuf *pq_peer_ciphertext;
+	u8 pq_shared_secret[PQ_SAE_SECRET_LEN];
+	int pq_role_is_encapsulator;
+
+	struct os_reltime disabled_until;
+
 
 #ifdef CONFIG_SAE_PK
 	u8 kek[SAE_MAX_HASH_LEN];

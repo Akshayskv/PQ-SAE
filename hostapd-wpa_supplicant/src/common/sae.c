@@ -21,6 +21,7 @@
 #include "ieee802_11_defs.h"
 #include "dragonfly.h"
 #include "sae.h"
+#include "sae_pq.h"
 
 
 int sae_set_group(struct sae_data *sae, int group)
@@ -128,6 +129,7 @@ void sae_clear_data(struct sae_data *sae)
 	if (sae == NULL)
 		return;
 	sae_clear_temp_data(sae);
+	sae_pq_deinit(sae);
 	crypto_bignum_deinit(sae->peer_commit_scalar, 0);
 	crypto_bignum_deinit(sae->peer_commit_scalar_accepted, 0);
 	no_pw_id = sae->no_pw_id;
@@ -1404,6 +1406,18 @@ int sae_prepare_commit_pt(struct sae_data *sae, const struct sae_pt *pt,
 	sae->tmp->ssid_len = pt->ssid_len;
 	sae->tmp->ap_pk = pk;
 #endif /* CONFIG_SAE_PK */
+	/* ADDITION */
+	sae_pq_assign_role(sae);
+	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
+		if (sae_pq_init(sae) < 0)
+			return -1;
+		if (sae->tmp->pq_role_is_encapsulator == 0 /* keypair owner */ &&
+			sae_pq_generate_keypair(sae) < 0)
+			return -1;
+	}
+
+	/* END */
+
 	sae->tmp->own_addr_higher = os_memcmp(addr1, addr2, ETH_ALEN) > 0;
 	wpabuf_free(sae->tmp->own_rejected_groups);
 	sae->tmp->own_rejected_groups = NULL;
@@ -1547,8 +1561,14 @@ static int sae_derive_keys(struct sae_data *sae, const u8 *k)
 	int ret = -1;
 	size_t hash_len, salt_len, prime_len = sae->tmp->prime_len;
 	size_t pmk_len;
-	const u8 *addr[1];
-	size_t len[1];
+	// const u8 *addr[1];
+	// size_t len[1];
+
+	// CHANGE
+	const u8 *addr[2];
+	size_t len[2];
+	size_t n_elem = 1;
+	// END
 
 	tmp = crypto_bignum_init();
 	if (tmp == NULL)
@@ -1610,10 +1630,23 @@ static int sae_derive_keys(struct sae_data *sae, const u8 *k)
 	}
 	wpa_hexdump(MSG_DEBUG, "SAE: salt for keyseed derivation",
 		    salt, salt_len);
+	// addr[0] = k;
+	// len[0] = prime_len;
+	// if (hkdf_extract(hash_len, salt, salt_len, 1, addr, len, keyseed) < 0)
+	// 	goto fail;
+
+	// CHNAGE
 	addr[0] = k;
 	len[0] = prime_len;
-	if (hkdf_extract(hash_len, salt, salt_len, 1, addr, len, keyseed) < 0)
-		goto fail;
+
+	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
+		addr[1] = sae->tmp->pq_shared_secret;
+		len[1] = PQ_SAE_SECRET_LEN;
+		n_elem = 2;
+	}
+
+	// END
+
 	wpa_hexdump_key(MSG_DEBUG, "SAE: keyseed", keyseed, hash_len);
 
 	if (crypto_bignum_add(sae->tmp->own_commit_scalar,
@@ -1678,22 +1711,45 @@ fail:
 }
 
 
+// int sae_process_commit(struct sae_data *sae)
+// {
+// 	u8 k[SAE_MAX_PRIME_LEN];
+// 	int ret = 0;
+
+// 	if (sae->tmp == NULL ||
+// 	    (sae->tmp->ec && sae_derive_k_ecc(sae, k) < 0) ||
+// 	    (sae->tmp->dh && sae_derive_k_ffc(sae, k) < 0) ||
+// 	    sae_derive_keys(sae, k) < 0)
+// 		ret = -1;
+
+// 	forced_memzero(k, SAE_MAX_PRIME_LEN);
+
+// 	return ret;
+// }
+
 int sae_process_commit(struct sae_data *sae)
 {
 	u8 k[SAE_MAX_PRIME_LEN];
-	int ret = 0;
 
 	if (sae->tmp == NULL ||
 	    (sae->tmp->ec && sae_derive_k_ecc(sae, k) < 0) ||
-	    (sae->tmp->dh && sae_derive_k_ffc(sae, k) < 0) ||
-	    sae_derive_keys(sae, k) < 0)
-		ret = -1;
+	    (sae->tmp->dh && sae_derive_k_ffc(sae, k) < 0))
+		return -1;
 
-	forced_memzero(k, SAE_MAX_PRIME_LEN);
+	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
+		if (sae->tmp->pq_role_is_encapsulator) {
+			if (sae_pq_encapsulate(sae) < 0)
+				return -1;
+		} else {
+			if (sae_pq_decapsulate(sae) < 0)
+				return -1;
+		}
+	}
 
-	return ret;
+	if (sae_derive_keys(sae, k) < 0)
+		return -1;
+	return 0;
 }
-
 
 int sae_write_commit(struct sae_data *sae, struct wpabuf *buf,
 		     const struct wpabuf *token, const u8 *identifier,
@@ -1776,6 +1832,15 @@ int sae_write_commit(struct sae_data *sae, struct wpabuf *buf,
 		wpa_printf(MSG_DEBUG, "SAE: AKM Suite Selector: %08x", suite);
 		sae->own_akm_suite_selector = suite;
 	}
+
+	/* ADDITION */
+	
+	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
+		if (sae_pq_write_element(sae, buf) < 0)
+			return -1;
+	}
+
+	/* END */
 
 	return 0;
 }
