@@ -21,6 +21,8 @@
 #include "ieee802_11_defs.h"
 #include "dragonfly.h"
 #include "sae.h"
+
+// include the PQ-SAE header
 #include "sae_pq.h"
 
 
@@ -117,6 +119,7 @@ void sae_clear_temp_data(struct sae_data *sae)
 	os_free(tmp->pw_id);
 	os_free(tmp->parsed_pw_id);
 	os_free(tmp->dec_pw_id);
+	sae_pq_deinit(sae);
 	bin_clear_free(tmp, sizeof(*tmp));
 	sae->tmp = NULL;
 }
@@ -129,7 +132,6 @@ void sae_clear_data(struct sae_data *sae)
 	if (sae == NULL)
 		return;
 	sae_clear_temp_data(sae);
-	sae_pq_deinit(sae);
 	crypto_bignum_deinit(sae->peer_commit_scalar, 0);
 	crypto_bignum_deinit(sae->peer_commit_scalar_accepted, 0);
 	no_pw_id = sae->no_pw_id;
@@ -1645,7 +1647,9 @@ static int sae_derive_keys(struct sae_data *sae, const u8 *k)
 		n_elem = 2;
 	}
 
-	// END
+	if (hkdf_extract(hash_len, salt, salt_len, n_elem, addr, len,
+			 keyseed) < 0)
+		goto fail;
 
 	wpa_hexdump_key(MSG_DEBUG, "SAE: keyseed", keyseed, hash_len);
 
@@ -1834,7 +1838,7 @@ int sae_write_commit(struct sae_data *sae, struct wpabuf *buf,
 	}
 
 	/* ADDITION */
-	
+
 	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
 		if (sae_pq_write_element(sae, buf) < 0)
 			return -1;
@@ -2305,6 +2309,12 @@ u16 sae_parse_commit(struct sae_data *sae, const u8 *data, size_t len,
 	res = sae_parse_password_identifier(sae, h2e, &pos, end);
 	if (res != WLAN_STATUS_SUCCESS)
 		return res;
+
+	if (sae->akmp == WPA_KEY_MGMT_PQ_SAE) {
+		res = sae_pq_parse_element(sae, &pos, end);
+		if (res != WLAN_STATUS_SUCCESS)
+			return res;
+	}
 
 	/* Conditional Rejected Groups element */
 	if (h2e) {
